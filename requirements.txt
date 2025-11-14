@@ -6,10 +6,8 @@ requests==2.31.0
 pillow==10.0.1
 ffmpeg-python==0.2.0
 py7zr==0.20.5
-python-magic==0.4.27
 yt-dlp==2023.7.6
 urlextract==1.8.0
 aiohttp==3.8.5
-google-api-python-client==2.95.0
-google-auth-httplib2==0.1.1
-google-auth-oauthlib==1.0.0
+filetype==1.2.0
+python-multipart==0.0.6

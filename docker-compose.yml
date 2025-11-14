@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  media-bot:
+    build: .
+    container_name: telegram-media-bot
+    restart: unless-stopped
+    volumes:
+      - ./temp:/app/temp
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    environment:
+      - TEMP_DIR=/app/temp
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: MongoDB if using local database
+  mongodb:
+    image: mongo:5.0
+    container_name: media-bot-db
+    restart: unless-stopped
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
+    ports:
+      - "27017:27017"
+
+volumes:
+  mongodb_data:

@@ -4,8 +4,8 @@ import os
 BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
 
 # File Size Limits (in bytes)
-MAX_FILE_SIZE = 2000 * 1024 * 1024  # 2GB
-MAX_VIDEO_DURATION = 3600  # 1 hour in seconds
+MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
+MAX_DOWNLOAD_SIZE = 1000 * 1024 * 1024  # 50MB for direct download
 
 # Temporary directory
 TEMP_DIR = "temp"
@@ -21,3 +21,6 @@ DEFAULT_SETTINGS = {
     'audio_speed': 100,
     'volume_level': 100
 }
+
+# Chunk size for large file processing
+CHUNK_SIZE = 10 * 1024 * 1024  # 10MB chunks

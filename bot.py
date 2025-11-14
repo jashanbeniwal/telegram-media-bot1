@@ -1,19 +1,48 @@
 import os
 import logging
+import random
+import string
+import asyncio
+import aiohttp
+import requests
+import zipfile
+import py7zr
+import json
+import filetype
+import subprocess
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     ContextTypes, filters
 )
-from config import BOT_TOKEN, DEFAULT_SETTINGS, MAX_FILE_SIZE
-from utils.video_processor import VideoProcessor
-from utils.audio_processor import AudioProcessor
-from utils.file_processor import FileProcessor
-from utils.large_file_handler import LargeFileHandler
-from utils.helpers import generate_random_id, clean_temp_files, format_file_size
+from moviepy.editor import VideoFileClip
+from pydub import AudioSegment
+from pydub.effects import speedup
 
-# ... rest of the bot.py code remains the same as the previous version ...
-# (Just make sure to use the version I provided earlier that doesn't have circular imports)
+# Bot Configuration
+BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
+
+# File Size Limits (in bytes)
+MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
+MAX_DOWNLOAD_SIZE = 50 * 1024 * 1024  # 50MB for direct download
+
+# Temporary directory
+TEMP_DIR = "temp"
+os.makedirs(TEMP_DIR, exist_ok=True)
+
+# Default Settings
+DEFAULT_SETTINGS = {
+    'rename_file': True,
+    'upload_mode': 'video',
+    'audio_quality': '128k',
+    'video_quality': '720p',
+    'compress_audio': False,
+    'audio_speed': 100,
+    'volume_level': 100
+}
+
+# Chunk size for large file processing
+CHUNK_SIZE = 10 * 1024 * 1024  # 10MB chunks
 
 # Set up logging
 logging.basicConfig(
@@ -21,6 +50,425 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Helper Functions
+def generate_random_id(length=8):
+    """Generate random ID for temp files"""
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+
+def clean_temp_files(file_paths=[]):
+    """Clean temporary files"""
+    for file_path in file_paths:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception as e:
+            print(f"Error cleaning file {file_path}: {e}")
+
+def format_file_size(size_bytes):
+    """Format file size in human readable format"""
+    if size_bytes == 0:
+        return "0B"
+    size_names = ["B", "KB", "MB", "GB"]
+    i = 0
+    while size_bytes >= 1024 and i < len(size_names)-1:
+        size_bytes /= 1024.0
+        i += 1
+    return f"{size_bytes:.2f} {size_names[i]}"
+
+def get_file_duration(file_path):
+    """Get duration of media file"""
+    try:
+        result = subprocess.run([
+            'ffprobe', '-v', 'error', '-show_entries', 
+            'format=duration', '-of', 
+            'default=noprint_wrappers=1:nokey=1', file_path
+        ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return float(result.stdout)
+    except:
+        return 0
+
+def is_video_file(filename):
+    """Check if file is a video based on extension"""
+    video_extensions = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp']
+    return any(filename.lower().endswith(ext) for ext in video_extensions)
+
+def is_audio_file(filename):
+    """Check if file is an audio based on extension"""
+    audio_extensions = ['.mp3', '.wav', '.aac', '.flac', '.m4a', '.ogg', '.opus', '.wma', '.amr']
+    return any(filename.lower().endswith(ext) for ext in audio_extensions)
+
+def is_document_file(filename):
+    """Check if file is a document based on extension"""
+    doc_extensions = ['.txt', '.pdf', '.doc', '.docx', '.zip', '.rar', '.7z', '.tar', '.json', '.srt', '.vtt', '.ass', '.sbv']
+    return any(filename.lower().endswith(ext) for ext in doc_extensions)
+
+# Video Processor Class
+class VideoProcessor:
+    def __init__(self):
+        self.temp_dir = TEMP_DIR
+
+    def remove_audio_subtitles(self, input_path, output_path):
+        """Remove audio and subtitles from video"""
+        cmd = [
+            'ffmpeg', '-i', input_path,
+            '-c', 'copy', '-an', '-sn',
+            output_path
+        ]
+        subprocess.run(cmd, check=True)
+        return output_path
+
+    def extract_audio(self, input_path, output_path):
+        """Extract audio from video"""
+        cmd = [
+            'ffmpeg', '-i', input_path,
+            '-q:a', '0', '-map', 'a',
+            output_path
+        ]
+        subprocess.run(cmd, check=True)
+        return output_path
+
+    def mute_audio(self, input_path, output_path):
+        """Mute audio in video"""
+        cmd = [
+            'ffmpeg', '-i', input_path,
+            '-c', 'copy', '-an', output_path
+        ]
+        subprocess.run(cmd, check=True)
+        return output_path
+
+    def video_to_gif(self, input_path, output_path, fps=10):
+        """Convert video to GIF"""
+        try:
+            clip = VideoFileClip(input_path)
+            clip.write_gif(output_path, fps=fps)
+            return output_path
+        except Exception as e:
+            # Fallback to ffmpeg if moviepy fails
+            cmd = [
+                'ffmpeg', '-i', input_path,
+                '-vf', 'fps=10,scale=320:-1:flags=lanczos',
+                output_path
+            ]
+            subprocess.run(cmd, check=True)
+            return output_path
+
+    def convert_video_format(self, input_path, output_path, format_type):
+        """Convert video to different format"""
+        cmd = ['ffmpeg', '-i', input_path]
+        
+        if format_type == 'mp4':
+            cmd.extend(['-c:v', 'libx264', '-c:a', 'aac'])
+        elif format_type == 'mkv':
+            cmd.extend(['-c', 'copy'])
+        elif format_type == 'avi':
+            cmd.extend(['-c:v', 'libx264', '-c:a', 'mp3'])
+        
+        cmd.append(output_path)
+        subprocess.run(cmd, check=True)
+        return output_path
+
+    def get_video_duration(self, input_path):
+        """Get video duration"""
+        return get_file_duration(input_path)
+
+    def compress_video(self, input_path, output_path, target_size):
+        """Compress video to target size in bytes"""
+        # Get video duration
+        duration = self.get_video_duration(input_path)
+        if duration == 0:
+            duration = 60  # Default to 1 minute if cannot determine
+        
+        # Calculate target bitrate (in kbps)
+        target_size_kb = target_size / 1024
+        target_bitrate = int((target_size_kb * 8) / duration)  # kbps
+        
+        # Ensure minimum bitrate
+        target_bitrate = max(target_bitrate, 500)  # Minimum 500 kbps
+        
+        cmd = [
+            'ffmpeg', '-i', input_path,
+            '-c:v', 'libx264',
+            '-b:v', f'{target_bitrate}k',
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            output_path
+        ]
+        subprocess.run(cmd, check=True)
+        return output_path
+
+    def generate_screenshots(self, input_path, output_pattern, count=5):
+        """Generate automatic screenshots"""
+        duration = self.get_video_duration(input_path)
+        if duration == 0:
+            duration = 60
+        
+        timestamps = [duration * (i+1) / (count+1) for i in range(count)]
+        
+        screenshots = []
+        for i, timestamp in enumerate(timestamps):
+            output_path = output_pattern.replace('%d', str(i+1))
+            cmd = [
+                'ffmpeg', '-i', input_path,
+                '-ss', str(timestamp),
+                '-vframes', '1', '-q:v', '2',
+                output_path
+            ]
+            subprocess.run(cmd, check=True)
+            screenshots.append(output_path)
+        
+        return screenshots
+
+# Audio Processor Class
+class AudioProcessor:
+    def __init__(self):
+        self.temp_dir = TEMP_DIR
+
+    def get_audio_duration(self, input_path):
+        """Get audio duration"""
+        try:
+            audio = AudioSegment.from_file(input_path)
+            return len(audio) / 1000.0  # Convert to seconds
+        except:
+            return 0
+
+    def convert_audio_format(self, input_path, output_path, format_type, quality='128k'):
+        """Convert audio to different format"""
+        audio = AudioSegment.from_file(input_path)
+        
+        if format_type == 'mp3':
+            audio.export(output_path, format='mp3', bitrate=quality)
+        elif format_type == 'wav':
+            audio.export(output_path, format='wav')
+        elif format_type == 'flac':
+            audio.export(output_path, format='flac')
+        elif format_type == 'aac':
+            audio.export(output_path, format='ipod', bitrate=quality)
+        elif format_type == 'm4a':
+            audio.export(output_path, format='ipod', bitrate=quality)
+        elif format_type == 'ogg':
+            audio.export(output_path, format='ogg', bitrate=quality)
+            
+        return output_path
+
+    def apply_slowed_reverb(self, input_path, output_path):
+        """Apply slowed and reverb effect"""
+        # Slow down
+        audio = AudioSegment.from_file(input_path)
+        slowed = speedup(audio, playback_speed=0.8)
+        
+        # Add reverb
+        cmd = [
+            'ffmpeg', '-i', input_path,
+            '-af', 'aecho=0.8:0.9:1000:0.3',
+            output_path
+        ]
+        subprocess.run(cmd, check=True)
+        return output_path
+
+    def apply_8d_audio(self, input_path, output_path):
+        """Apply 8D audio effect"""
+        cmd = [
+            'ffmpeg', '-i', input_path,
+            '-af', 'apulsator=hz=0.08',
+            output_path
+        ]
+        subprocess.run(cmd, check=True)
+        return output_path
+
+    def change_audio_speed(self, input_path, output_path, speed_percentage):
+        """Change audio speed"""
+        speed_factor = speed_percentage / 100.0
+        cmd = [
+            'ffmpeg', '-i', input_path,
+            '-filter:a', f'atempo={speed_factor}',
+            output_path
+        ]
+        subprocess.run(cmd, check=True)
+        return output_path
+
+    def change_volume(self, input_path, output_path, volume_percentage):
+        """Change audio volume"""
+        volume_factor = volume_percentage / 100.0
+        cmd = [
+            'ffmpeg', '-i', input_path,
+            '-filter:a', f'volume={volume_factor}',
+            output_path
+        ]
+        subprocess.run(cmd, check=True)
+        return output_path
+
+    def compress_audio(self, input_path, output_path, compression_level):
+        """Compress audio file"""
+        cmd = [
+            'ffmpeg', '-i', input_path,
+            '-acodec', 'libmp3lame',
+            '-b:a', f'{compression_level}k',
+            output_path
+        ]
+        subprocess.run(cmd, check=True)
+        return output_path
+
+# File Processor Class
+class FileProcessor:
+    def __init__(self):
+        self.temp_dir = TEMP_DIR
+
+    def create_archive(self, file_paths, output_path, archive_type='zip', password=None):
+        """Create archive file (zip, rar, 7z)"""
+        if archive_type == 'zip':
+            with zipfile.ZipFile(output_path, 'w') as zipf:
+                for file_path in file_paths:
+                    zipf.write(file_path, os.path.basename(file_path))
+                    if password:
+                        zipf.setpassword(password.encode())
+        
+        elif archive_type == '7z':
+            with py7zr.SevenZipFile(output_path, 'w', password=password) as archive:
+                for file_path in file_paths:
+                    archive.write(file_path, os.path.basename(file_path))
+        
+        return output_path
+
+    def extract_archive(self, archive_path, output_dir, password=None):
+        """Extract archive file"""
+        extracted_files = []
+        
+        if archive_path.endswith('.zip'):
+            with zipfile.ZipFile(archive_path, 'r') as zipf:
+                if password:
+                    zipf.setpassword(password.encode())
+                zipf.extractall(output_dir)
+                extracted_files = zipf.namelist()
+        
+        elif archive_path.endswith('.7z'):
+            with py7zr.SevenZipFile(archive_path, 'r', password=password) as archive:
+                archive.extractall(output_dir)
+                extracted_files = archive.getnames()
+        
+        return [os.path.join(output_dir, f) for f in extracted_files]
+
+    def format_json(self, input_path, output_path, indent=4):
+        """Format JSON file with specified indentation"""
+        with open(input_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=indent, ensure_ascii=False)
+        
+        return output_path
+
+# Large File Handler Class
+class LargeFileHandler:
+    def __init__(self):
+        self.temp_dir = TEMP_DIR
+
+    async def upload_large_file(self, file_path, chat_id, context, caption=""):
+        """Upload large files using chunked method"""
+        try:
+            file_size = os.path.getsize(file_path)
+            
+            if file_size <= 50 * 1024 * 1024:  # 50MB Telegram limit
+                # Use normal upload for small files
+                with open(file_path, 'rb') as f:
+                    await context.bot.send_document(
+                        chat_id=chat_id,
+                        document=f,
+                        caption=caption,
+                        filename=os.path.basename(file_path)
+                    )
+                return True
+            
+            # For files larger than 50MB, we need to split or compress
+            if file_size > 50 * 1024 * 1024:
+                # Try to compress or split the file
+                return await self.handle_oversize_file(file_path, chat_id, context, caption)
+                
+        except Exception as e:
+            raise Exception(f"Upload failed: {str(e)}")
+
+    async def handle_oversize_file(self, file_path, chat_id, context, caption):
+        """Handle files larger than 50MB"""
+        file_size = os.path.getsize(file_path)
+        
+        # Check if it's a video and we can compress it
+        if file_path.lower().endswith(('.mp4', '.avi', '.mkv', '.mov', '.m4v', '.webm')):
+            processor = VideoProcessor()
+            
+            # Try to compress the video
+            compressed_path = f"{self.temp_dir}/compressed_{generate_random_id()}.mp4"
+            
+            message = await context.bot.send_message(
+                chat_id=chat_id,
+                text="🔄 Compressing video to fit Telegram limits..."
+            )
+            
+            try:
+                # Compress video to fit under 50MB
+                target_size = 45 * 1024 * 1024  # 45MB target
+                compressed_file = processor.compress_video(file_path, compressed_path, target_size)
+                
+                if os.path.exists(compressed_file) and os.path.getsize(compressed_file) <= 50 * 1024 * 1024:
+                    with open(compressed_file, 'rb') as f:
+                        await context.bot.send_document(
+                            chat_id=chat_id,
+                            document=f,
+                            caption=f"📹 Compressed Version\n{caption}",
+                            filename=f"compressed_{os.path.basename(file_path)}"
+                        )
+                    await message.delete()
+                    # Clean up compressed file
+                    if os.path.exists(compressed_file):
+                        os.remove(compressed_file)
+                    return True
+                else:
+                    await message.edit_text("❌ Compression didn't reduce size enough. Trying to split file...")
+            except Exception as e:
+                await message.edit_text(f"❌ Compression failed: {str(e)}")
+        
+        # If compression fails or not applicable, split the file
+        return await self.split_and_send_file(file_path, chat_id, context, caption)
+
+    async def split_and_send_file(self, file_path, chat_id, context, caption):
+        """Split large file into chunks and send"""
+        try:
+            file_size = os.path.getsize(file_path)
+            chunk_size = 45 * 1024 * 1024  # 45MB chunks
+            total_chunks = (file_size + chunk_size - 1) // chunk_size
+            
+            message = await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"📦 Splitting file into {total_chunks} parts..."
+            )
+            
+            file_extension = os.path.splitext(file_path)[1]
+            
+            with open(file_path, 'rb') as original_file:
+                for i in range(total_chunks):
+                    chunk_data = original_file.read(chunk_size)
+                    chunk_path = f"{self.temp_dir}/chunk_{i+1}_{generate_random_id()}{file_extension}"
+                    
+                    with open(chunk_path, 'wb') as chunk_file:
+                        chunk_file.write(chunk_data)
+                    
+                    with open(chunk_path, 'rb') as chunk_file:
+                        await context.bot.send_document(
+                            chat_id=chat_id,
+                            document=chunk_file,
+                            caption=f"Part {i+1}/{total_chunks}\n{caption}",
+                            filename=f"{os.path.splitext(os.path.basename(file_path))[0]}_part{i+1}{file_extension}"
+                        )
+                    
+                    # Clean up chunk file
+                    if os.path.exists(chunk_path):
+                        os.remove(chunk_path)
+                    await asyncio.sleep(1)  # Rate limiting
+            
+            await message.delete()
+            return True
+            
+        except Exception as e:
+            raise Exception(f"File splitting failed: {str(e)}")
 
 # Initialize processors
 video_processor = VideoProcessor()
@@ -31,6 +479,7 @@ large_file_handler = LargeFileHandler()
 # User settings storage
 user_settings = {}
 
+# Bot Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message when the command /start is issued."""
     user_id = update.effective_user.id
@@ -43,20 +492,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 I can process your videos, audios, documents up to **2GB**!
 
 🎥 **Video Features:**
-• Remove/extract audio & subtitles
-• Trim, merge, convert videos  
+• Remove/extract audio
+• Convert video formats
 • Generate screenshots & GIFs
-• Optimize and rename videos
+• Compress videos
 
 🎵 **Audio Features:**
-• Convert formats with custom quality
+• Convert audio formats
 • Apply effects (8D, slowed reverb)
-• Boost bass/treble, change speed
-• Trim, merge, compress audio
+• Change speed & volume
+• Compress audio
 
 📄 **Document Features:**
 • Create/extract archives
-• Convert subtitles
 • Format JSON files
 
 ⚙️ Use /settings to customize bot behavior
@@ -75,7 +523,6 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📝 Rename File", callback_data="settings_rename")],
         [InlineKeyboardButton("📤 Upload Mode", callback_data="settings_upload")],
         [InlineKeyboardButton("🎵 Audio Quality", callback_data="settings_audio_quality")],
-        [InlineKeyboardButton("🎥 Video Quality", callback_data="settings_video_quality")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -296,9 +743,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if file_extension in ['zip', 'rar', '7z', 'tar']:
                 keyboard.append([InlineKeyboardButton("📦 Extract Archive", callback_data="doc_extract")])
             
-            if file_extension in ['srt', 'vtt', 'ass', 'sbv']:
-                keyboard.append([InlineKeyboardButton("🔄 Convert Subtitle", callback_data="doc_convert_sub")])
-            
             if file_extension == 'json':
                 keyboard.append([InlineKeyboardButton("📝 Format JSON", callback_data="doc_format_json")])
             
@@ -333,7 +777,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # URL detected
         keyboard = [
             [InlineKeyboardButton("📥 Download File", callback_data="url_download")],
-            [InlineKeyboardButton("🔗 Shorten URL", callback_data="url_shorten")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
@@ -549,7 +992,10 @@ async def handle_document_callback(update: Update, context: ContextTypes.DEFAULT
                             filename=os.path.basename(file_path)
                         )
             
-            clean_temp_files(extracted_files)
+            # Clean up extracted files
+            for file_path in extracted_files:
+                if os.path.exists(file_path):
+                    clean_temp_files([file_path])
             await query.edit_message_text("✅ Archive extracted successfully!")
         
         elif data == "doc_format_json":
@@ -636,7 +1082,7 @@ def main():
     application.add_error_handler(error_handler)
     
     # Start the Bot
-    print("🤖 Bot is running...")
+    print("🤖 Bot is running with 2GB file support...")
     application.run_polling()
 
 if __name__ == '__main__':

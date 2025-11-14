@@ -97,16 +97,25 @@ async def handle_video_callback(client, callback_query: CallbackQuery):
         success = await ffmpeg_helper.run_command(cmd)
         
         if success and os.path.exists(output_path):
-            # Send processed file
-            if helpers.is_large_file(output_path):
-                # Use Telethon for large files
-                from utils.telethon_client import telethon_client
-                await telethon_client.upload_large_file(
-                    callback_query.message.chat.id,
-                    output_path,
-                    "✅ Processing complete!"
-                )
+            # Check file size and use appropriate upload method
+            file_size = os.path.getsize(output_path)
+            
+            if file_size > 2 * 1024 * 1024 * 1024:  # Larger than 2GB
+                try:
+                    from utils.telethon_client import telethon_client
+                    await telethon_client.upload_large_file(
+                        callback_query.message.chat.id,
+                        output_path,
+                        "✅ Processing complete!"
+                    )
+                except Exception as e:
+                    await callback_query.message.edit_text(
+                        f"❌ File too large for Pyrogram and Telethon not configured.\n"
+                        f"Error: {str(e)}"
+                    )
+                    return
             else:
+                # Use Pyrogram for smaller files
                 await client.send_document(
                     callback_query.message.chat.id,
                     output_path,
@@ -122,40 +131,5 @@ async def handle_video_callback(client, callback_query: CallbackQuery):
         await callback_query.message.edit_text(f"❌ Error: {str(e)}")
     
     # Cleanup input file after processing
-    if os.path.exists(input_path):
-        os.remove(input_path)
-
-# Handle format selection for video to audio conversion
-@Client.on_callback_query(filters.regex("^format_"))
-async def handle_format_selection(client, callback_query: CallbackQuery):
-    user_id = callback_query.from_user.id
-    data = callback_query.data
-    format_type = data.replace("format_", "")
-    
-    session = user_sessions.get(user_id)
-    if not session:
-        await callback_query.answer("❌ Session expired", show_alert=True)
-        return
-    
-    input_path = session["file_path"]
-    temp_dir = f"temp/{user_id}"
-    output_path = os.path.join(temp_dir, f"converted_audio.{format_type}")
-    
-    await callback_query.answer(f"🔄 Converting to {format_type.upper()}...")
-    
-    cmd = ffmpeg_helper.convert_audio(input_path, output_path, format_type)
-    success = await ffmpeg_helper.run_command(cmd)
-    
-    if success and os.path.exists(output_path):
-        await client.send_audio(
-            callback_query.message.chat.id,
-            output_path,
-            caption=f"✅ Converted to {format_type.upper()}"
-        )
-        os.remove(output_path)
-    else:
-        await callback_query.message.edit_text("❌ Conversion failed!")
-    
-    # Cleanup
     if os.path.exists(input_path):
         os.remove(input_path)

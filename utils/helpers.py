@@ -1,8 +1,8 @@
 import os
 import random
 import string
+import filetype
 from typing import Dict, Any
-import magic
 from config import TEMP_DIR
 
 def generate_random_id(length=8):
@@ -10,18 +10,26 @@ def generate_random_id(length=8):
     return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
 def get_file_type(file_path):
-    """Detect file type using python-magic"""
-    mime = magic.Magic(mime=True)
-    file_mime = mime.from_file(file_path)
-    
-    if file_mime.startswith('video/'):
-        return 'video'
-    elif file_mime.startswith('audio/'):
-        return 'audio'
-    elif file_mime.startswith('image/'):
-        return 'image'
-    else:
-        return 'document'
+    """Detect file type using filetype"""
+    try:
+        kind = filetype.guess(file_path)
+        if kind is None:
+            # Check extension for documents
+            ext = os.path.splitext(file_path)[1].lower().replace('.', '')
+            if ext in ['txt', 'pdf', 'doc', 'docx', 'zip', 'rar', '7z', 'json', 'srt', 'vtt', 'ass', 'sbv']:
+                return 'document'
+            return 'unknown'
+        
+        if kind.mime.startswith('video/'):
+            return 'video'
+        elif kind.mime.startswith('audio/'):
+            return 'audio'
+        elif kind.mime.startswith('image/'):
+            return 'image'
+        else:
+            return 'document'
+    except Exception:
+        return 'unknown'
 
 def clean_temp_files(file_paths=[]):
     """Clean temporary files"""
@@ -55,3 +63,18 @@ def get_file_duration(file_path):
         return float(result.stdout)
     except:
         return 0
+
+def is_video_file(filename):
+    """Check if file is a video based on extension"""
+    video_extensions = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp']
+    return any(filename.lower().endswith(ext) for ext in video_extensions)
+
+def is_audio_file(filename):
+    """Check if file is an audio based on extension"""
+    audio_extensions = ['.mp3', '.wav', '.aac', '.flac', '.m4a', '.ogg', '.opus', '.wma', '.amr']
+    return any(filename.lower().endswith(ext) for ext in audio_extensions)
+
+def is_document_file(filename):
+    """Check if file is a document based on extension"""
+    doc_extensions = ['.txt', '.pdf', '.doc', '.docx', '.zip', '.rar', '.7z', '.tar', '.json', '.srt', '.vtt', '.ass', '.sbv']
+    return any(filename.lower().endswith(ext) for ext in doc_extensions)

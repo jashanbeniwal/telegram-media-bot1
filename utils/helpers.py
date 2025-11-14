@@ -2,7 +2,7 @@ import os
 import re
 import aiofiles
 import aiohttp
-import magic
+import mimetypes
 from typing import Optional, Tuple
 from pyrogram.types import Message
 
@@ -45,19 +45,39 @@ class Helpers:
     
     @staticmethod
     async def detect_file_type(file_path: str) -> str:
-        """Detect file type using python-magic"""
-        mime = magic.Magic(mime=True)
-        file_type = mime.from_file(file_path)
+        """Detect file type using file extension and simple mime detection"""
+        import mimetypes
         
-        if file_type.startswith('video'):
+        # Get file extension
+        ext = os.path.splitext(file_path)[1].lower()
+        
+        # Video extensions
+        video_exts = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp']
+        # Audio extensions  
+        audio_exts = ['.mp3', '.wav', '.flac', '.aac', '.m4a', '.wma', '.ogg', '.opus']
+        # Image extensions
+        image_exts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
+        # Archive extensions
+        archive_exts = ['.zip', '.rar', '.7z', '.tar', '.gz']
+        
+        if ext in video_exts:
             return 'video'
-        elif file_type.startswith('audio'):
+        elif ext in audio_exts:
             return 'audio'
-        elif file_type.startswith('image'):
+        elif ext in image_exts:
             return 'image'
-        elif file_type in ['application/zip', 'application/x-rar', 'application/x-7z-compressed']:
+        elif ext in archive_exts:
             return 'archive'
         else:
+            # Fallback to mimetype detection
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if mime_type:
+                if mime_type.startswith('video'):
+                    return 'video'
+                elif mime_type.startswith('audio'):
+                    return 'audio'
+                elif mime_type.startswith('image'):
+                    return 'image'
             return 'document'
     
     @staticmethod

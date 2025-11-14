@@ -1,5 +1,6 @@
 import os
 import logging
+import sys
 from pyrogram import Client
 from config import Config
 
@@ -18,9 +19,10 @@ def main():
     # Validate configuration
     try:
         Config.validate()
+        logger.info("Configuration validated successfully")
     except ValueError as e:
         logger.error(f"Configuration error: {e}")
-        return
+        sys.exit(1)
     
     # Create Pyrogram client
     app = Client(
@@ -28,13 +30,20 @@ def main():
         api_id=Config.API_ID,
         api_hash=Config.API_HASH,
         bot_token=Config.BOT_TOKEN,
-        plugins=dict(root="handlers")
+        plugins=dict(root="handlers"),
+        workdir=os.getcwd()
     )
     
     logger.info("Starting Media Bot...")
     
     # Start the bot
-    app.run()
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Bot crashed with error: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

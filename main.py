@@ -1,6 +1,7 @@
 import os
 import logging
 import sys
+import asyncio
 from pyrogram import Client
 from config import Config
 
@@ -15,14 +16,14 @@ logger = logging.getLogger(__name__)
 os.makedirs("temp", exist_ok=True)
 os.makedirs("logs", exist_ok=True)
 
-def main():
+async def main_async():
     # Validate configuration
     try:
         Config.validate()
         logger.info("Configuration validated successfully")
     except ValueError as e:
         logger.error(f"Configuration error: {e}")
-        sys.exit(1)
+        return
     
     # Create Pyrogram client
     app = Client(
@@ -30,15 +31,23 @@ def main():
         api_id=Config.API_ID,
         api_hash=Config.API_HASH,
         bot_token=Config.BOT_TOKEN,
-        plugins=dict(root="handlers"),
-        workdir=os.getcwd()
+        plugins=dict(root="handlers")
     )
     
     logger.info("Starting Media Bot...")
     
-    # Start the bot
+    # Start health server in background if needed
+    # await start_health_server()
+    
+    await app.start()
+    logger.info("Bot started successfully!")
+    
+    # Keep running
+    await asyncio.Event().wait()
+
+def main():
     try:
-        app.run()
+        asyncio.run(main_async())
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:

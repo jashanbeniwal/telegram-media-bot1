@@ -1,13 +1,26 @@
 import os
+import random
+import string
 from pydub import AudioSegment
-from pydub.effects import speedup, low_pass_filter, high_pass_filter
+from pydub.effects import speedup
 import subprocess
 from config import TEMP_DIR
-from .helpers import generate_random_id
+
+def generate_random_id(length=8):
+    """Generate random ID for temp files"""
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
 class AudioProcessor:
     def __init__(self):
         self.temp_dir = TEMP_DIR
+
+    def get_audio_duration(self, input_path):
+        """Get audio duration"""
+        try:
+            audio = AudioSegment.from_file(input_path)
+            return len(audio) / 1000.0  # Convert to seconds
+        except:
+            return 0
 
     def convert_audio_format(self, input_path, output_path, format_type, quality='128k'):
         """Convert audio to different format"""

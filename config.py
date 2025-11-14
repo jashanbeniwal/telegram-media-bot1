@@ -25,7 +25,7 @@ class Config:
     # Admin User IDs
     ADMINS = list(map(int, os.getenv("ADMINS", "1955406483").split())) if os.getenv("ADMINS") else []
     
-    # Thumbnail Configuration
+ # Thumbnail Configuration
     THUMBNAIL_SIZE = (320, 320)
     
     # Queue Configuration
@@ -33,7 +33,11 @@ class Config:
     
     @classmethod
     def validate(cls):
-        required_vars = ["BOT_TOKEN", "API_ID", "API_HASH", "STRING_SESSION", "MONGODB_URI"]
+        required_vars = ["BOT_TOKEN", "API_ID", "API_HASH", "MONGODB_URI"]
         missing = [var for var in required_vars if not getattr(cls, var)]
         if missing:
             raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+        
+        # Warn about missing STRING_SESSION but don't fail
+        if not cls.STRING_SESSION:
+            print("⚠️  WARNING: STRING_SESSION not set. Large file uploads (>2GB) will be disabled.")

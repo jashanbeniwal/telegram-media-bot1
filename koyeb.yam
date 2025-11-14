@@ -1,0 +1,15 @@
+name: telegram-media-bot
+services:
+  - name: app
+    ports:
+      - port: 8080
+        http_path: /
+    env:
+      - key: BOT_TOKEN
+        value: YOUR_BOT_TOKEN_HERE
+    build:
+      type: dockerfile
+    instance:
+      type: nano
+    regions:
+      - fra

@@ -10,7 +10,7 @@ from utils.video_processor import VideoProcessor
 from utils.audio_processor import AudioProcessor
 from utils.file_processor import FileProcessor
 from utils.large_file_handler import LargeFileHandler
-from utils.helpers import generate_random_id, clean_temp_files, get_file_type
+from utils.helpers import generate_random_id, clean_temp_files
 
 # Set up logging
 logging.basicConfig(
@@ -56,14 +56,8 @@ I can process your videos, audios, documents up to **2GB**!
 • Convert subtitles
 • Format JSON files
 
-🔗 **URL Features:**
-• Download from direct links
-• Google Drive downloader
-• Link shortener
-• Archive extraction
-
 ⚙️ Use /settings to customize bot behavior
-📥 **Send me any file (up to 2GB) to get started!**
+📥 **Send me any file to get started!**
     """
     
     await update.message.reply_text(welcome_text, parse_mode='Markdown')
@@ -79,8 +73,6 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📤 Upload Mode", callback_data="settings_upload")],
         [InlineKeyboardButton("🎵 Audio Quality", callback_data="settings_audio_quality")],
         [InlineKeyboardButton("🎥 Video Quality", callback_data="settings_video_quality")],
-        [InlineKeyboardButton("🔊 Audio Speed", callback_data="settings_audio_speed")],
-        [InlineKeyboardButton("🔊 Volume Level", callback_data="settings_volume")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -158,15 +150,19 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_id = video.file_id
         file = await context.bot.get_file(file_id)
         
-        # Download file using large file handler
-        temp_file_path = await large_file_handler.download_large_file(
-            file, file_name, update, context
-        )
+        # Show downloading message
+        downloading_msg = await update.message.reply_text("📥 Downloading file...")
         
-        if temp_file_path and os.path.exists(temp_file_path):
+        # Download file
+        temp_file_path = f"temp/{generate_random_id()}_{file_name}"
+        await file.download_to_drive(temp_file_path)
+        
+        if os.path.exists(temp_file_path) and os.path.getsize(temp_file_path) > 0:
             context.user_data['current_file'] = temp_file_path
             context.user_data['file_type'] = 'video'
             context.user_data['file_size'] = file_size
+            
+            await downloading_msg.edit_text("✅ File downloaded! Choose processing option:")
             
             # Show video processing options
             keyboard = [
@@ -175,11 +171,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🔇 Mute Audio", callback_data="video_mute")],
                 [InlineKeyboardButton("🔄 Video to GIF", callback_data="video_to_gif")],
                 [InlineKeyboardButton("📸 Auto Screenshots", callback_data="video_screenshots")],
-                [InlineKeyboardButton("🎬 Video Sample", callback_data="video_sample")],
-                [InlineKeyboardButton("🎵 Audio Converter", callback_data="video_audio_convert")],
                 [InlineKeyboardButton("🔄 Video Converter", callback_data="video_convert")],
-                [InlineKeyboardButton("⚡ Compress Video", callback_data="video_compress")],
-                [InlineKeyboardButton("📝 Rename Video", callback_data="video_rename")],
                 [InlineKeyboardButton("ℹ️ Media Info", callback_data="video_info")],
             ]
             
@@ -192,7 +184,9 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=reply_markup
             )
         else:
-            await update.message.reply_text("❌ Failed to download the file. Please try again.")
+            await downloading_msg.edit_text("❌ Failed to download the file. Please try again.")
+            if os.path.exists(temp_file_path):
+                clean_temp_files([temp_file_path])
     
     except Exception as e:
         logger.error(f"Error handling video: {e}")
@@ -220,27 +214,27 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_id = audio.file_id
         file = await context.bot.get_file(file_id)
         
-        # Download file using large file handler
-        temp_file_path = await large_file_handler.download_large_file(
-            file, file_name, update, context
-        )
+        # Show downloading message
+        downloading_msg = await update.message.reply_text("📥 Downloading audio...")
         
-        if temp_file_path and os.path.exists(temp_file_path):
+        # Download file
+        temp_file_path = f"temp/{generate_random_id()}_{file_name}"
+        await file.download_to_drive(temp_file_path)
+        
+        if temp_file_path and os.path.exists(temp_file_path) and os.path.getsize(temp_file_path) > 0:
             context.user_data['current_file'] = temp_file_path
             context.user_data['file_type'] = 'audio'
             context.user_data['file_size'] = file_size
+            
+            await downloading_msg.edit_text("✅ Audio downloaded! Choose processing option:")
             
             # Show audio processing options
             keyboard = [
                 [InlineKeyboardButton("🔄 Audio Converter", callback_data="audio_convert")],
                 [InlineKeyboardButton("🌀 Slowed & Reverb", callback_data="audio_slowed_reverb")],
                 [InlineKeyboardButton("8️⃣ 8D Audio", callback_data="audio_8d")],
-                [InlineKeyboardButton("🎛️ Equalizer", callback_data="audio_equalizer")],
-                [InlineKeyboardButton("🔊 Bass Booster", callback_data="audio_bass")],
-                [InlineKeyboardButton("✂️ Audio Trimmer", callback_data="audio_trim")],
                 [InlineKeyboardButton("🎚️ Speed Changer", callback_data="audio_speed")],
                 [InlineKeyboardButton("🔊 Volume Changer", callback_data="audio_volume")],
-                [InlineKeyboardButton("📦 Compress Audio", callback_data="audio_compress")],
                 [InlineKeyboardButton("ℹ️ Media Info", callback_data="audio_info")],
             ]
             
@@ -253,7 +247,9 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=reply_markup
             )
         else:
-            await update.message.reply_text("❌ Failed to download the audio file.")
+            await downloading_msg.edit_text("❌ Failed to download the audio file.")
+            if os.path.exists(temp_file_path):
+                clean_temp_files([temp_file_path])
     
     except Exception as e:
         logger.error(f"Error handling audio: {e}")
@@ -277,15 +273,19 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_id = document.file_id
         file = await context.bot.get_file(file_id)
         
-        # Download file using large file handler
-        temp_file_path = await large_file_handler.download_large_file(
-            file, file_name, update, context
-        )
+        # Show downloading message
+        downloading_msg = await update.message.reply_text("📥 Downloading document...")
         
-        if temp_file_path and os.path.exists(temp_file_path):
+        # Download file
+        temp_file_path = f"temp/{generate_random_id()}_{file_name}"
+        await file.download_to_drive(temp_file_path)
+        
+        if temp_file_path and os.path.exists(temp_file_path) and os.path.getsize(temp_file_path) > 0:
             context.user_data['current_file'] = temp_file_path
             context.user_data['file_type'] = 'document'
             context.user_data['file_size'] = file_size
+            
+            await downloading_msg.edit_text("✅ Document downloaded! Choose processing option:")
             
             # Show document processing options based on file type
             keyboard = []
@@ -300,7 +300,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard.append([InlineKeyboardButton("📝 Format JSON", callback_data="doc_format_json")])
             
             keyboard.extend([
-                [InlineKeyboardButton("📝 Rename File", callback_data="doc_rename")],
                 [InlineKeyboardButton("📦 Create Archive", callback_data="doc_archive")],
             ])
             
@@ -316,7 +315,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("ℹ️ No specific processing options available for this document type.")
         else:
-            await update.message.reply_text("❌ Failed to download the document.")
+            await downloading_msg.edit_text("❌ Failed to download the document.")
+            if os.path.exists(temp_file_path):
+                clean_temp_files([temp_file_path])
     
     except Exception as e:
         logger.error(f"Error handling document: {e}")
@@ -330,7 +331,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("📥 Download File", callback_data="url_download")],
             [InlineKeyboardButton("🔗 Shorten URL", callback_data="url_shorten")],
-            [InlineKeyboardButton("📦 Extract Archive", callback_data="url_extract")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
@@ -338,7 +338,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
     else:
-        await update.message.reply_text("Send me a file (video, audio, document up to 2GB) or a URL to get started!")
+        await update.message.reply_text("Send me a file (video, audio, document) to get started!")
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle all callback queries."""
@@ -392,20 +392,11 @@ async def handle_video_callback(update: Update, context: ContextTypes.DEFAULT_TY
             result_path = video_processor.video_to_gif(current_file, output_path)
             await send_result_file(context, query, result_path, "Video converted to GIF")
         
-        elif data == "video_compress":
-            await query.edit_message_text("🔄 Compressing video...")
-            output_path = f"temp/compressed_{generate_random_id()}.mp4"
-            file_size = context.user_data.get('file_size', 0)
-            target_size = min(45 * 1024 * 1024, file_size // 2)  # Target 45MB or half original
-            result_path = video_processor.compress_video(current_file, output_path, target_size)
-            await send_result_file(context, query, result_path, "Video compressed")
-        
         elif data == "video_convert":
             # Show format options
             keyboard = [
                 [InlineKeyboardButton("MP4", callback_data="video_convert_mp4")],
                 [InlineKeyboardButton("MKV", callback_data="video_convert_mkv")],
-                [InlineKeyboardButton("AVI", callback_data="video_convert_avi")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text("🎥 Choose output format:", reply_markup=reply_markup)
@@ -442,10 +433,9 @@ async def handle_video_callback(update: Update, context: ContextTypes.DEFAULT_TY
 📊 **Media Information**
 
 📁 File: `{os.path.basename(current_file)}`
-💾 Size: {file_size / (1024*1024*1024):.2f}GB
+💾 Size: {file_size / (1024*1024):.1f}MB
 ⏱️ Duration: {duration:.2f} seconds
 🎬 Type: Video
-📊 Resolution: {video_processor.get_video_resolution(current_file)}
             """
             await query.edit_message_text(info_text, parse_mode='Markdown')
         
@@ -475,9 +465,6 @@ async def handle_audio_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 [InlineKeyboardButton("MP3", callback_data="audio_convert_mp3")],
                 [InlineKeyboardButton("WAV", callback_data="audio_convert_wav")],
                 [InlineKeyboardButton("FLAC", callback_data="audio_convert_flac")],
-                [InlineKeyboardButton("AAC", callback_data="audio_convert_aac")],
-                [InlineKeyboardButton("M4A", callback_data="audio_convert_m4a")],
-                [InlineKeyboardButton("OGG", callback_data="audio_convert_ogg")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text("🎵 Choose output format:", reply_markup=reply_markup)
@@ -503,12 +490,6 @@ async def handle_audio_callback(update: Update, context: ContextTypes.DEFAULT_TY
             result_path = audio_processor.apply_8d_audio(current_file, output_path)
             await send_result_file(context, query, result_path, "8D audio effect applied")
         
-        elif data == "audio_compress":
-            await query.edit_message_text("🔄 Compressing audio...")
-            output_path = f"temp/compressed_{generate_random_id()}.mp3"
-            result_path = audio_processor.compress_audio(current_file, output_path, 128)
-            await send_result_file(context, query, result_path, "Audio compressed")
-        
         elif data == "audio_info":
             # Get basic file info
             file_size = os.path.getsize(current_file)
@@ -518,7 +499,7 @@ async def handle_audio_callback(update: Update, context: ContextTypes.DEFAULT_TY
 📊 **Media Information**
 
 📁 File: `{os.path.basename(current_file)}`
-💾 Size: {file_size / (1024*1024*1024):.2f}GB
+💾 Size: {file_size / (1024*1024):.1f}MB
 ⏱️ Duration: {duration:.2f} seconds
 🎵 Type: Audio
             """
@@ -558,10 +539,12 @@ async def handle_document_callback(update: Update, context: ContextTypes.DEFAULT
             
             for file_path in extracted_files:
                 if os.path.isfile(file_path):
-                    await large_file_handler.upload_large_file(
-                        file_path, query.message.chat_id, context, 
-                        f"Extracted: {os.path.basename(file_path)}"
-                    )
+                    with open(file_path, 'rb') as doc:
+                        await context.bot.send_document(
+                            chat_id=query.message.chat_id, 
+                            document=doc,
+                            filename=os.path.basename(file_path)
+                        )
             
             clean_temp_files(extracted_files)
             await query.edit_message_text("✅ Archive extracted successfully!")
@@ -592,10 +575,24 @@ async def send_result_file(context, query, file_path, caption):
     try:
         chat_id = query.message.chat_id
         
-        # Use large file handler for upload
-        success = await large_file_handler.upload_large_file(
-            file_path, chat_id, context, f"✅ {caption}"
-        )
+        # Check file size
+        file_size = os.path.getsize(file_path)
+        
+        if file_size > 50 * 1024 * 1024:  # 50MB limit
+            # Use large file handler for files > 50MB
+            success = await large_file_handler.upload_large_file(
+                file_path, chat_id, context, f"✅ {caption}"
+            )
+        else:
+            # Use normal upload for small files
+            with open(file_path, 'rb') as file:
+                await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=file,
+                    caption=f"✅ {caption}",
+                    filename=os.path.basename(file_path)
+                )
+            success = True
         
         if success:
             await query.edit_message_text(f"✅ {caption} and sent!")
@@ -636,7 +633,7 @@ def main():
     application.add_error_handler(error_handler)
     
     # Start the Bot
-    print("🤖 Bot is running with 2GB file support...")
+    print("🤖 Bot is running...")
     application.run_polling()
 
 if __name__ == '__main__':

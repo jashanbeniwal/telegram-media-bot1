@@ -5,9 +5,9 @@ load_dotenv()
 
 class Config:
     # Bot Configuration
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    API_ID = int(os.getenv("API_ID", 0))
-    API_HASH = os.getenv("API_HASH")
+    BOT_TOKEN = os.getenv("BOT_TOKEN", "8432959224:AAF_FBKGn_m217SK-LaX7PidU8QM_WOEEMU")
+    API_ID = int(os.getenv("API_ID", "25331263"))
+    API_HASH = os.getenv("API_HASH", "cab85305bf85125a2ac053210bcd1030")
     
     # Telethon String Session (for large file uploads) - Make this optional
     STRING_SESSION = os.getenv("STRING_SESSION")

@@ -41,9 +41,6 @@ DEFAULT_SETTINGS = {
     'volume_level': 100
 }
 
-# Chunk size for large file processing
-CHUNK_SIZE = 10 * 1024 * 1024  # 10MB chunks
-
 # Set up logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -87,21 +84,6 @@ def get_file_duration(file_path):
         return float(result.stdout)
     except:
         return 0
-
-def is_video_file(filename):
-    """Check if file is a video based on extension"""
-    video_extensions = ['.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp']
-    return any(filename.lower().endswith(ext) for ext in video_extensions)
-
-def is_audio_file(filename):
-    """Check if file is an audio based on extension"""
-    audio_extensions = ['.mp3', '.wav', '.aac', '.flac', '.m4a', '.ogg', '.opus', '.wma', '.amr']
-    return any(filename.lower().endswith(ext) for ext in audio_extensions)
-
-def is_document_file(filename):
-    """Check if file is a document based on extension"""
-    doc_extensions = ['.txt', '.pdf', '.doc', '.docx', '.zip', '.rar', '.7z', '.tar', '.json', '.srt', '.vtt', '.ass', '.sbv']
-    return any(filename.lower().endswith(ext) for ext in doc_extensions)
 
 # Video Processor Class
 class VideoProcessor:
@@ -380,12 +362,11 @@ class LargeFileHandler:
                 return True
             
             # For files larger than 50MB, we need to split or compress
-            if file_size > 50 * 1024 * 1024:
-                # Try to compress or split the file
-                return await self.handle_oversize_file(file_path, chat_id, context, caption)
+            return await self.handle_oversize_file(file_path, chat_id, context, caption)
                 
         except Exception as e:
-            raise Exception(f"Upload failed: {str(e)}")
+            logger.error(f"Upload failed: {e}")
+            return False
 
     async def handle_oversize_file(self, file_path, chat_id, context, caption):
         """Handle files larger than 50MB"""
@@ -468,7 +449,8 @@ class LargeFileHandler:
             return True
             
         except Exception as e:
-            raise Exception(f"File splitting failed: {str(e)}")
+            logger.error(f"File splitting failed: {e}")
+            return False
 
 # Initialize processors
 video_processor = VideoProcessor()
@@ -489,7 +471,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = """
 🤖 **Welcome to Advanced Media Bot!** 🚀
 
-I can process your videos, audios, documents up to **2GB**!
+I can process your videos, audios, documents!
 
 🎥 **Video Features:**
 • Remove/extract audio
@@ -509,6 +491,8 @@ I can process your videos, audios, documents up to **2GB**!
 
 ⚙️ Use /settings to customize bot behavior
 📥 **Send me any file to get started!**
+
+💡 **Note:** For best results, use files under 50MB. Larger files will be compressed or split automatically.
     """
     
     await update.message.reply_text(welcome_text, parse_mode='Markdown')
@@ -586,8 +570,19 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         file_size = video.file_size
-        if file_size and file_size > MAX_FILE_SIZE:
-            await update.message.reply_text("❌ File size exceeds 2GB limit.")
+        
+        # Check file size and provide appropriate message
+        if file_size and file_size > MAX_DOWNLOAD_SIZE:
+            # File is too large for direct download
+            await update.message.reply_text(
+                "📁 **Large File Detected**\n\n"
+                f"File size: {format_file_size(file_size)}\n"
+                "⚠️ Files over 50MB cannot be processed directly via Telegram Bot API.\n\n"
+                "💡 **Please try one of these:**\n"
+                "• Send a smaller file (<50MB)\n"
+                "• Use a direct download link instead\n"
+                "• Compress the file before sending"
+            )
             return
         
         # Get file name
@@ -598,45 +593,60 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file_name = "video.mp4"
         
         file_id = video.file_id
-        file = await context.bot.get_file(file_id)
         
-        # Show downloading message
-        downloading_msg = await update.message.reply_text("📥 Downloading file...")
+        try:
+            file = await context.bot.get_file(file_id)
+            
+            # Show downloading message
+            downloading_msg = await update.message.reply_text("📥 Downloading file...")
+            
+            # Download file
+            temp_file_path = f"temp/{generate_random_id()}_{file_name}"
+            await file.download_to_drive(temp_file_path)
+            
+            if os.path.exists(temp_file_path) and os.path.getsize(temp_file_path) > 0:
+                context.user_data['current_file'] = temp_file_path
+                context.user_data['file_type'] = 'video'
+                context.user_data['file_size'] = file_size
+                
+                await downloading_msg.edit_text("✅ File downloaded! Choose processing option:")
+                
+                # Show video processing options
+                keyboard = [
+                    [InlineKeyboardButton("🔇 Remove Audio", callback_data="video_remove_audio")],
+                    [InlineKeyboardButton("🎵 Extract Audio", callback_data="video_extract_audio")],
+                    [InlineKeyboardButton("🔇 Mute Audio", callback_data="video_mute")],
+                    [InlineKeyboardButton("🔄 Video to GIF", callback_data="video_to_gif")],
+                    [InlineKeyboardButton("📸 Auto Screenshots", callback_data="video_screenshots")],
+                    [InlineKeyboardButton("🔄 Video Converter", callback_data="video_convert")],
+                    [InlineKeyboardButton("ℹ️ Media Info", callback_data="video_info")],
+                ]
+                
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(
+                    f"🎥 **Video Processing Options**\n"
+                    f"📁 File: {file_name}\n"
+                    f"💾 Size: {format_file_size(file_size)}\n"
+                    f"Choose what you want to do:",
+                    reply_markup=reply_markup
+                )
+            else:
+                await downloading_msg.edit_text("❌ Failed to download the file. Please try again.")
+                if os.path.exists(temp_file_path):
+                    clean_temp_files([temp_file_path])
         
-        # Download file
-        temp_file_path = f"temp/{generate_random_id()}_{file_name}"
-        await file.download_to_drive(temp_file_path)
-        
-        if os.path.exists(temp_file_path) and os.path.getsize(temp_file_path) > 0:
-            context.user_data['current_file'] = temp_file_path
-            context.user_data['file_type'] = 'video'
-            context.user_data['file_size'] = file_size
-            
-            await downloading_msg.edit_text("✅ File downloaded! Choose processing option:")
-            
-            # Show video processing options
-            keyboard = [
-                [InlineKeyboardButton("🔇 Remove Audio", callback_data="video_remove_audio")],
-                [InlineKeyboardButton("🎵 Extract Audio", callback_data="video_extract_audio")],
-                [InlineKeyboardButton("🔇 Mute Audio", callback_data="video_mute")],
-                [InlineKeyboardButton("🔄 Video to GIF", callback_data="video_to_gif")],
-                [InlineKeyboardButton("📸 Auto Screenshots", callback_data="video_screenshots")],
-                [InlineKeyboardButton("🔄 Video Converter", callback_data="video_convert")],
-                [InlineKeyboardButton("ℹ️ Media Info", callback_data="video_info")],
-            ]
-            
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(
-                f"🎥 **Video Processing Options**\n"
-                f"📁 File: {file_name}\n"
-                f"💾 Size: {file_size / (1024*1024):.1f}MB\n"
-                f"Choose what you want to do:",
-                reply_markup=reply_markup
-            )
-        else:
-            await downloading_msg.edit_text("❌ Failed to download the file. Please try again.")
-            if os.path.exists(temp_file_path):
-                clean_temp_files([temp_file_path])
+        except Exception as e:
+            if "File is too big" in str(e):
+                await update.message.reply_text(
+                    "❌ **File Too Large**\n\n"
+                    "This file is too large to download via Telegram Bot API (max 50MB).\n\n"
+                    "💡 **Please try:**\n"
+                    "• Send a smaller file (<50MB)\n"
+                    "• Use a direct download link\n"
+                    "• Compress the file before sending"
+                )
+            else:
+                raise e
     
     except Exception as e:
         logger.error(f"Error handling video: {e}")
@@ -650,8 +660,15 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         file_size = audio.file_size
-        if file_size and file_size > MAX_FILE_SIZE:
-            await update.message.reply_text("❌ File size exceeds 2GB limit.")
+        
+        # Check file size
+        if file_size and file_size > MAX_DOWNLOAD_SIZE:
+            await update.message.reply_text(
+                "📁 **Large File Detected**\n\n"
+                f"File size: {format_file_size(file_size)}\n"
+                "⚠️ Files over 50MB cannot be processed directly.\n\n"
+                "💡 Please send a smaller file (<50MB) or use a direct download link."
+            )
             return
         
         # Get file name
@@ -662,44 +679,56 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file_name = "audio.mp3"
         
         file_id = audio.file_id
-        file = await context.bot.get_file(file_id)
         
-        # Show downloading message
-        downloading_msg = await update.message.reply_text("📥 Downloading audio...")
+        try:
+            file = await context.bot.get_file(file_id)
+            
+            # Show downloading message
+            downloading_msg = await update.message.reply_text("📥 Downloading audio...")
+            
+            # Download file
+            temp_file_path = f"temp/{generate_random_id()}_{file_name}"
+            await file.download_to_drive(temp_file_path)
+            
+            if temp_file_path and os.path.exists(temp_file_path) and os.path.getsize(temp_file_path) > 0:
+                context.user_data['current_file'] = temp_file_path
+                context.user_data['file_type'] = 'audio'
+                context.user_data['file_size'] = file_size
+                
+                await downloading_msg.edit_text("✅ Audio downloaded! Choose processing option:")
+                
+                # Show audio processing options
+                keyboard = [
+                    [InlineKeyboardButton("🔄 Audio Converter", callback_data="audio_convert")],
+                    [InlineKeyboardButton("🌀 Slowed & Reverb", callback_data="audio_slowed_reverb")],
+                    [InlineKeyboardButton("8️⃣ 8D Audio", callback_data="audio_8d")],
+                    [InlineKeyboardButton("🎚️ Speed Changer", callback_data="audio_speed")],
+                    [InlineKeyboardButton("🔊 Volume Changer", callback_data="audio_volume")],
+                    [InlineKeyboardButton("ℹ️ Media Info", callback_data="audio_info")],
+                ]
+                
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await update.message.reply_text(
+                    f"🎵 **Audio Processing Options**\n"
+                    f"📁 File: {file_name}\n"
+                    f"💾 Size: {format_file_size(file_size)}\n"
+                    f"Choose what you want to do:",
+                    reply_markup=reply_markup
+                )
+            else:
+                await downloading_msg.edit_text("❌ Failed to download the audio file.")
+                if os.path.exists(temp_file_path):
+                    clean_temp_files([temp_file_path])
         
-        # Download file
-        temp_file_path = f"temp/{generate_random_id()}_{file_name}"
-        await file.download_to_drive(temp_file_path)
-        
-        if temp_file_path and os.path.exists(temp_file_path) and os.path.getsize(temp_file_path) > 0:
-            context.user_data['current_file'] = temp_file_path
-            context.user_data['file_type'] = 'audio'
-            context.user_data['file_size'] = file_size
-            
-            await downloading_msg.edit_text("✅ Audio downloaded! Choose processing option:")
-            
-            # Show audio processing options
-            keyboard = [
-                [InlineKeyboardButton("🔄 Audio Converter", callback_data="audio_convert")],
-                [InlineKeyboardButton("🌀 Slowed & Reverb", callback_data="audio_slowed_reverb")],
-                [InlineKeyboardButton("8️⃣ 8D Audio", callback_data="audio_8d")],
-                [InlineKeyboardButton("🎚️ Speed Changer", callback_data="audio_speed")],
-                [InlineKeyboardButton("🔊 Volume Changer", callback_data="audio_volume")],
-                [InlineKeyboardButton("ℹ️ Media Info", callback_data="audio_info")],
-            ]
-            
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(
-                f"🎵 **Audio Processing Options**\n"
-                f"📁 File: {file_name}\n"
-                f"💾 Size: {file_size / (1024*1024):.1f}MB\n"
-                f"Choose what you want to do:",
-                reply_markup=reply_markup
-            )
-        else:
-            await downloading_msg.edit_text("❌ Failed to download the audio file.")
-            if os.path.exists(temp_file_path):
-                clean_temp_files([temp_file_path])
+        except Exception as e:
+            if "File is too big" in str(e):
+                await update.message.reply_text(
+                    "❌ **Audio File Too Large**\n\n"
+                    "This audio file is too large to download via Telegram Bot API.\n\n"
+                    "💡 Please send a smaller file (<50MB)."
+                )
+            else:
+                raise e
     
     except Exception as e:
         logger.error(f"Error handling audio: {e}")
@@ -713,58 +742,77 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         file_size = document.file_size
-        if file_size and file_size > MAX_FILE_SIZE:
-            await update.message.reply_text("❌ File size exceeds 2GB limit.")
+        
+        # Check file size
+        if file_size and file_size > MAX_DOWNLOAD_SIZE:
+            await update.message.reply_text(
+                "📁 **Large File Detected**\n\n"
+                f"File size: {format_file_size(file_size)}\n"
+                "⚠️ Files over 50MB cannot be processed directly.\n\n"
+                "💡 Please send a smaller file (<50MB)."
+            )
             return
         
         file_name = document.file_name or "document.bin"
         file_extension = file_name.split('.')[-1] if '.' in file_name else 'bin'
         
         file_id = document.file_id
-        file = await context.bot.get_file(file_id)
         
-        # Show downloading message
-        downloading_msg = await update.message.reply_text("📥 Downloading document...")
+        try:
+            file = await context.bot.get_file(file_id)
+            
+            # Show downloading message
+            downloading_msg = await update.message.reply_text("📥 Downloading document...")
+            
+            # Download file
+            temp_file_path = f"temp/{generate_random_id()}_{file_name}"
+            await file.download_to_drive(temp_file_path)
+            
+            if temp_file_path and os.path.exists(temp_file_path) and os.path.getsize(temp_file_path) > 0:
+                context.user_data['current_file'] = temp_file_path
+                context.user_data['file_type'] = 'document'
+                context.user_data['file_size'] = file_size
+                
+                await downloading_msg.edit_text("✅ Document downloaded! Choose processing option:")
+                
+                # Show document processing options based on file type
+                keyboard = []
+                
+                if file_extension in ['zip', 'rar', '7z', 'tar']:
+                    keyboard.append([InlineKeyboardButton("📦 Extract Archive", callback_data="doc_extract")])
+                
+                if file_extension == 'json':
+                    keyboard.append([InlineKeyboardButton("📝 Format JSON", callback_data="doc_format_json")])
+                
+                keyboard.extend([
+                    [InlineKeyboardButton("📦 Create Archive", callback_data="doc_archive")],
+                ])
+                
+                if keyboard:
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    await update.message.reply_text(
+                        f"📄 **Document Processing Options**\n"
+                        f"📁 File: {file_name}\n"
+                        f"💾 Size: {format_file_size(file_size)}\n"
+                        f"Choose what you want to do:",
+                        reply_markup=reply_markup
+                    )
+                else:
+                    await update.message.reply_text("ℹ️ No specific processing options available for this document type.")
+            else:
+                await downloading_msg.edit_text("❌ Failed to download the document.")
+                if os.path.exists(temp_file_path):
+                    clean_temp_files([temp_file_path])
         
-        # Download file
-        temp_file_path = f"temp/{generate_random_id()}_{file_name}"
-        await file.download_to_drive(temp_file_path)
-        
-        if temp_file_path and os.path.exists(temp_file_path) and os.path.getsize(temp_file_path) > 0:
-            context.user_data['current_file'] = temp_file_path
-            context.user_data['file_type'] = 'document'
-            context.user_data['file_size'] = file_size
-            
-            await downloading_msg.edit_text("✅ Document downloaded! Choose processing option:")
-            
-            # Show document processing options based on file type
-            keyboard = []
-            
-            if file_extension in ['zip', 'rar', '7z', 'tar']:
-                keyboard.append([InlineKeyboardButton("📦 Extract Archive", callback_data="doc_extract")])
-            
-            if file_extension == 'json':
-                keyboard.append([InlineKeyboardButton("📝 Format JSON", callback_data="doc_format_json")])
-            
-            keyboard.extend([
-                [InlineKeyboardButton("📦 Create Archive", callback_data="doc_archive")],
-            ])
-            
-            if keyboard:
-                reply_markup = InlineKeyboardMarkup(keyboard)
+        except Exception as e:
+            if "File is too big" in str(e):
                 await update.message.reply_text(
-                    f"📄 **Document Processing Options**\n"
-                    f"📁 File: {file_name}\n"
-                    f"💾 Size: {file_size / (1024*1024):.1f}MB\n"
-                    f"Choose what you want to do:",
-                    reply_markup=reply_markup
+                    "❌ **Document Too Large**\n\n"
+                    "This document is too large to download via Telegram Bot API.\n\n"
+                    "💡 Please send a smaller file (<50MB)."
                 )
             else:
-                await update.message.reply_text("ℹ️ No specific processing options available for this document type.")
-        else:
-            await downloading_msg.edit_text("❌ Failed to download the document.")
-            if os.path.exists(temp_file_path):
-                clean_temp_files([temp_file_path])
+                raise e
     
     except Exception as e:
         logger.error(f"Error handling document: {e}")
@@ -784,7 +832,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
     else:
-        await update.message.reply_text("Send me a file (video, audio, document) to get started!")
+        await update.message.reply_text(
+            "Send me a file (video, audio, document) to get started!\n\n"
+            "💡 **Note:** For best results, use files under 50MB."
+        )
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle all callback queries."""
@@ -810,7 +861,12 @@ async def handle_video_callback(update: Update, context: ContextTypes.DEFAULT_TY
     current_file = context.user_data.get('current_file')
     
     if not current_file or not os.path.exists(current_file):
-        await query.edit_message_text("❌ No file found or file was deleted. Please send a video file first.")
+        # Use send_message instead of edit_message_text to avoid the "message not modified" error
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="❌ No file found or file was deleted. Please send a video file first.",
+            reply_to_message_id=query.message.message_id
+        )
         return
     
     try:
@@ -879,7 +935,7 @@ async def handle_video_callback(update: Update, context: ContextTypes.DEFAULT_TY
 📊 **Media Information**
 
 📁 File: `{os.path.basename(current_file)}`
-💾 Size: {file_size / (1024*1024):.1f}MB
+💾 Size: {format_file_size(file_size)}
 ⏱️ Duration: {duration:.2f} seconds
 🎬 Type: Video
             """
@@ -901,7 +957,11 @@ async def handle_audio_callback(update: Update, context: ContextTypes.DEFAULT_TY
     current_file = context.user_data.get('current_file')
     
     if not current_file or not os.path.exists(current_file):
-        await query.edit_message_text("❌ No file found or file was deleted. Please send an audio file first.")
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="❌ No file found or file was deleted. Please send an audio file first.",
+            reply_to_message_id=query.message.message_id
+        )
         return
     
     try:
@@ -945,7 +1005,7 @@ async def handle_audio_callback(update: Update, context: ContextTypes.DEFAULT_TY
 📊 **Media Information**
 
 📁 File: `{os.path.basename(current_file)}`
-💾 Size: {file_size / (1024*1024):.1f}MB
+💾 Size: {format_file_size(file_size)}
 ⏱️ Duration: {duration:.2f} seconds
 🎵 Type: Audio
             """
@@ -967,7 +1027,11 @@ async def handle_document_callback(update: Update, context: ContextTypes.DEFAULT
     current_file = context.user_data.get('current_file')
     
     if not current_file or not os.path.exists(current_file):
-        await query.edit_message_text("❌ No file found or file was deleted. Please send a document first.")
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="❌ No file found or file was deleted. Please send a document first.",
+            reply_to_message_id=query.message.message_id
+        )
         return
     
     try:
@@ -1082,7 +1146,7 @@ def main():
     application.add_error_handler(error_handler)
     
     # Start the Bot
-    print("🤖 Bot is running with 2GB file support...")
+    print("🤖 Bot is running with improved file handling...")
     application.run_polling()
 
 if __name__ == '__main__':

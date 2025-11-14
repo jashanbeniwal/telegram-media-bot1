@@ -10,7 +10,10 @@ from utils.video_processor import VideoProcessor
 from utils.audio_processor import AudioProcessor
 from utils.file_processor import FileProcessor
 from utils.large_file_handler import LargeFileHandler
-from utils.helpers import generate_random_id, clean_temp_files
+from utils.helpers import generate_random_id, clean_temp_files, format_file_size
+
+# ... rest of the bot.py code remains the same as the previous version ...
+# (Just make sure to use the version I provided earlier that doesn't have circular imports)
 
 # Set up logging
 logging.basicConfig(

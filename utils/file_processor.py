@@ -1,9 +1,14 @@
 import os
+import random
+import string
 import zipfile
 import py7zr
 import json
 from config import TEMP_DIR
-from .helpers import generate_random_id
+
+def generate_random_id(length=8):
+    """Generate random ID for temp files"""
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
 
 class FileProcessor:
     def __init__(self):

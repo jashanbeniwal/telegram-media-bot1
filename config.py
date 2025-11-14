@@ -5,7 +5,7 @@ BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
 
 # File Size Limits (in bytes)
 MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
-MAX_DOWNLOAD_SIZE = 1000 * 1024 * 1024  # 50MB for direct download
+MAX_DOWNLOAD_SIZE = 50 * 1024 * 1024  # 50MB for direct download
 
 # Temporary directory
 TEMP_DIR = "temp"
